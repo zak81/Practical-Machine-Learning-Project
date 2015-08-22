@@ -1,0 +1,138 @@
+---
+title: "Practical Machine Learning - Coursera Project"
+author: "Yosuke Ishizaka"
+
+---
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website
+here: http://groupware.les.inf.puc?rio.br/har (http://groupware.les.inf.puc?rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+##Summary
+The goal of this project is to predict the manner in which they did the exercise.  The `classe` which we are trying to predict are classified in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Downloading training and testing data.
+```{r, echo=FALSE}
+library(caret)
+# Check for existence of data files.
+if(!file.exists("pml-training.csv")) {
+        fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+        download.file(fileUrl, destfile="pml-training.csv", method="curl")
+}
+if(!file.exists("pml-testing.csv")) {
+        fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+        download.file(fileUrl, destfile="pml-testing.csv", method="curl")
+}
+```
+```{r}
+# Read CSV files into data frames. We'll use trainData to build a model to predict 20 different test cases in testData.
+trainData <- read.csv("pml-training.csv", na.strings = c("NA", "", "#DIV/0!"))
+testData <- read.csv("pml-testing.csv")
+```
+
+
+
+Explore our trainData dataset which we'll use to build a model.
+```{r}
+dim(trainData)
+```
+```{r, results='hide'}
+summary(trainData)
+```
+Basic data transformation. Goal is to remove all NA values.
+Count NA's.  Count includes values that were blank or division by zero.
+```{r}
+NAcount = vector(mode="integer", length=0)
+for(i in 1:length(trainData)) {
+        NAcount[i] = sum(is.na(trainData[, i]))
+}
+table(NAcount)
+```
+There are 67 columns with 19216 NA values. In total there are 100 columns with at least 19216 NA's. At least 97% of the observation in these parameters are NA's.
+```{r}
+removeNA <- which(NAcount/nrow(trainData) > .97)
+```
+Remove NA columns in trainData dataset.
+```{r}
+trainData <- trainData[, -removeNA]
+summary(trainData)
+```
+Remove bookkeeping variables from our training and testing dataset.
+```{r, results='hide'}
+trainData <- trainData[, -c(1:7)]
+trainData2 <- trainData[, -53]
+testData_id <- testData[, 160]
+testData <- testData[, -160]
+testData <- testData[colnames(trainData2)]
+testData <- cbind(testData, testData_id)
+rm(trainData2)
+rm(testData_id)
+```
+Check for near zero variables. We found none, so we can keep 53 variables.
+```{r}
+nzv <- nearZeroVar(trainData, saveMetrics=TRUE)
+nzv
+```
+## Model Building
+Splitting data using partition of 70% training and 30% testing.
+```{r}
+set.seed(1122)
+inTrain <- createDataPartition(trainData$classe, p=.7, list=FALSE)
+training <- trainData[inTrain, ]
+testing <- trainData[-inTrain, ]
+```
+Choosing random forest for its high accuracy of prediction. After testing different ntree values, 40 trees was the reasonable number which resulted in high accuracy.
+```{r}
+if(!file.exists("modelFit.rds")) {
+        modelFit <- train(classe~., data = training, method = "rf", ntree=40)
+        saveRDS(modelFit, "modelFit.rds")
+}
+modelFit <- readRDS("modelFit.rds")        
+predict <- predict(modelFit, testing[, -53])
+confusionMatrix(predict, testing$classe)
+```
+Model using Bootstrap with 10 resamples
+```{r}
+if(!file.exists("modelFitBS.rds")) {
+        tcBS <- trainControl(method="boot", number=10)
+        modelFitBS <- train(classe~., data = training, trControl = tcBS, method = "rf", ntree=40)
+        saveRDS(modelFitBS, "modelFitBS.rds")
+}
+modelFitBS <- readRDS("modelFitBS.rds")
+predictBS <- predict(modelFitBS, testing[, -53])
+confusionMatrix(predictBS, testing$classe)
+```
+Model using k-fold cross validation
+```{r}
+if(!file.exists("modelFitKF.rds")) {
+        tcKF <- trainControl(method = "cv", number=10)
+        modelFitKF <- train(classe~., data = training, trControl = tcKF, method = "rf", ntree=40)
+        saveRDS(modelFitKF, "modelFitKF.rds")
+}
+modelFitKF <- readRDS("modelFitKF.rds")        
+predictKF <- predict(modelFitKF, testing[, -53])
+confusionMatrix(predictKF, testing$classe)    
+```
+Model using repeated k-fold cross validation
+```{r}
+if(!file.exists("modelFitRKF.rds")) {
+        tcRKF <- trainControl(method = "repeatedcv", number=10, repeats=3)
+        modelFitRKF <- train(classe~., data = training, trControl = tcRKF, method = "rf", ntree=40)
+        saveRDS(modelFitRKF, "modelFitRKF.rds")
+}
+modelFitRKF <- readRDS("modelFitRKF.rds")
+predictRKF <- predict(modelFitRKF, testing[, -53])
+confusionMatrix(predictRKF, testing$classe)
+```
+Using random forest algorithm with k-fold cross validation and repeated k-fold cross validation yielded the best accuracy.  Accuracy of my model is 99.22% with out of sample error 0.78%
+```{r}
+acc_model <- confusionMatrix(predictRKF, testing$classe)$overall[1]
+acc_model
+error_oos <- 1 - as.numeric(confusionMatrix(predictRKF, testing$classe)$overall[1])
+error_oos
+```
+## Prediction
+Using my prediction model to predict 20 test cases from testData.
+```{r}
+predictTest <- predict(modelFitRKF, testData[, -53])
+predictTest
+```
